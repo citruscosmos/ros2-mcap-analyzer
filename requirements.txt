@@ -1,0 +1,6 @@
+mcap
+mcap-ros2-support
+pyyaml
+pandas
+numpy
+asteval
