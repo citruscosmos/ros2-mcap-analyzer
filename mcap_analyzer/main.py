@@ -31,7 +31,7 @@ def get_mcap_files(source_path: Path) -> List[Path]:
         sys.exit(1)
 
     if source_path.is_dir():
-        files = sorted(list(source_path.glob('*.mcap')))
+        files = sorted(list(source_path.glob('**/*.mcap')))
         if not files:
             print(f"Error: No MCAP files found in the directory: {source_path}", file=sys.stderr)
             sys.exit(1)
