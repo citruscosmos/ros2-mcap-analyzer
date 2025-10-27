@@ -1,0 +1,18 @@
+analyses:
+  - id: "velocity_kmh"
+    topic_name: "/vehicle/status/velocity"
+    field_names: "twist.linear.x"
+    parse_string: "twist.linear.x(type:float64) * 3.6"
+    analysis_type: "basic_stats"
+
+  - id: "imu_timestamp_jitter"
+    topic_name: "/sensor/imu/data"
+    field_names: "header.stamp.sec, header.stamp.nanosec"
+    parse_string: "header.stamp.sec(type:uint32) * 1000000000 + header.stamp.nanosec(type:uint32)"
+    analysis_type: "timestamp(freq:100)"
+
+  - id: "custom_binary_float"
+    topic_name: "/custom/binary_topic"
+    field_names: "data"
+    parse_string: "data(byte:8-8,type:float64)"
+    analysis_type: "basic_stats"
