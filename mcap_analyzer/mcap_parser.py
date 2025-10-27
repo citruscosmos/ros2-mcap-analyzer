@@ -4,7 +4,10 @@ import pandas as pd
 import struct
 import re
 from asteval import Interpreter
-from mcap_ros2.reader import McapReader
+from natsort import natsorted
+from tqdm import tqdm
+from mcap.reader import make_reader
+from mcap_ros2.decoder import DecoderFactory
 import sys
 
 class McapParser:
@@ -102,12 +105,12 @@ class McapParser:
         # Remove directives from the expression string for evaluation
         expression = re.sub(r'\([^)]+\)', '', self.parse_string)
 
-        for mcap_path in sorted(mcap_paths):
+        for mcap_path in tqdm(natsorted(mcap_paths)):
             try:
                 with open(mcap_path, "rb") as f:
-                    reader = McapReader(f)
-                    for schema, channel, message in reader.iter_messages(topics=[self.topic_name]):
-                        ros_msg = reader.deserialize(schema, message)
+                    reader = make_reader(f, decoder_factories=[DecoderFactory()])
+                    for schema, channel, message, ros_msg in reader.iter_decoded_messages(topics=[self.topic_name]):
+                        # ros_msg = reader.deserialize(schema, message)
 
                         raw_values = {}
                         parsed_values_for_eval = {}
