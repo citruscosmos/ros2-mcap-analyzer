@@ -6,7 +6,7 @@ from typing import List, Dict, Any
 from mcap_analyzer.config_loader import load_config
 from mcap_analyzer.utils import create_output_directory
 from mcap_analyzer.reporter import Reporter
-from mcap_analyzer.mcap_parser import McapParser
+from mcap_analyzer.mcap_parser import McapReader
 from mcap_analyzer.analysis.base_analyzer import BaseAnalyzer
 from mcap_analyzer.analysis.none_analyzer import NoneAnalyzer
 from mcap_analyzer.analysis.basic_stats_analyzer import BasicStatsAnalyzer
@@ -49,7 +49,8 @@ def run_analysis(mcap_source_path: Path, config_path: Path):
     """The main function that executes the entire analysis process."""
     try:
         config = load_config(config_path)
-        if 'analyses' not in config or not isinstance(config['analyses'], list):
+        analyses = config.get('analyses', [])
+        if not analyses or not isinstance(analyses, list):
             print("Error: The configuration file must contain a list named 'analyses'.", file=sys.stderr)
             sys.exit(1)
     except (FileNotFoundError, ValueError) as e:
@@ -62,26 +63,31 @@ def run_analysis(mcap_source_path: Path, config_path: Path):
 
     print(f"Output directory: {output_dir}")
     print(f"Target MCAP files: {[str(f) for f in mcap_files]}")
+    print("\n--- Starting to process all MCAP data ---")
 
-    for task in config['analyses']:
+    # The MCAP file is read only once for all tasks.
+    reader = McapReader(analyses)
+    all_task_data = reader.process_files(mcap_files)
+
+    print("\n--- Starting analysis of each task ---")
+    for task in analyses:
+        task_id = task['id']
         try:
-            print(f"\n--- Starting analysis task '{task['id']}' ---")
+            print(f"Analyzing task '{task_id}'...")
+            df = all_task_data.get(task_id)
 
-            parser = McapParser(task)
-            df = parser.process_mcap_files(mcap_files)
-
-            if df.empty:
-                print(f"Warning: No messages found for topic '{task['topic_name']}' or they could not be processed. Skipping task.")
+            if df is None or df.empty:
+                print(f"Warning: No messages found for task '{task_id}' (topic: '{task['topic_name']}') or they could not be processed. Skipping.")
                 continue
 
-            reporter.save_intermediate_csv(task['id'], df)
+            reporter.save_intermediate_csv(task_id, df)
             analysis_type = task.get('analysis_type', 'none')
             analyzer = get_analyzer(analysis_type)
             result = analyzer.analyze(df)
-            reporter.add_analysis_result(task['id'], task['topic_name'], analysis_type, result)
+            reporter.add_analysis_result(task_id, task['topic_name'], analysis_type, result)
 
         except Exception as e:
-            print(f"Error: An unexpected error occurred while processing task '{task.get('id', 'N/A')}': {e}", file=sys.stderr)
+            print(f"Error: An unexpected error occurred while processing task '{task_id}': {e}", file=sys.stderr)
             continue
 
     reporter.print_console_report()
