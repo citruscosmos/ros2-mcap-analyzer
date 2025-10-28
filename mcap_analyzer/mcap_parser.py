@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import List, Dict, Any
 import pandas as pd
+import numpy as np
 import struct
 import re
 from asteval import Interpreter
@@ -10,14 +11,70 @@ from mcap.reader import make_reader
 from mcap_ros2.decoder import DecoderFactory
 import sys
 
-class McapParser:
-    """A class to parse data from MCAP files and generate a DataFrame."""
+class McapReader:
+    """
+    A class to read MCAP files once and process the data for multiple analysis tasks.
+    """
+    def __init__(self, analysis_tasks: List[Dict[str, Any]]):
+        """Initializes the McapReader with a list of analysis task configurations."""
+        self.task_processors = [TaskProcessor(task) for task in analysis_tasks]
+        self.topic_to_processors = self._map_topics_to_processors()
+        self.all_topics = list(self.topic_to_processors.keys())
+
+    def _map_topics_to_processors(self) -> Dict[str, List['TaskProcessor']]:
+        """Creates a mapping from topic names to the processors that use them."""
+        mapping = {}
+        for processor in self.task_processors:
+            if processor.topic_name not in mapping:
+                mapping[processor.topic_name] = []
+            mapping[processor.topic_name].append(processor)
+        return mapping
+
+    def process_files(self, mcap_paths: List[Path]) -> Dict[str, pd.DataFrame]:
+        """
+        Processes multiple MCAP files, dispatching messages to the appropriate
+        TaskProcessors, and returns a dictionary of DataFrames for each task.
+        """
+        # Initialize a dictionary to store lists of rows for each task
+        task_results = {processor.task_id: [] for processor in self.task_processors}
+
+        for mcap_path in tqdm(natsorted(mcap_paths), desc="Processing MCAP files"):
+            try:
+                with open(mcap_path, "rb") as f:
+                    reader = make_reader(f, decoder_factories=[DecoderFactory()])
+                    # Iterate over messages for all topics required by the tasks
+                    for schema, channel, message, ros_msg in reader.iter_decoded_messages(topics=self.all_topics):
+                        processors = self.topic_to_processors.get(channel.topic, [])
+                        for processor in processors:
+                            # Each processor processes the message
+                            row = processor.process_message(message.log_time, ros_msg)
+                            if row:
+                                task_results[processor.task_id].append(row)
+            except Exception as e:
+                print(f"Error: An error occurred while processing MCAP file '{mcap_path}': {e}", file=sys.stderr)
+                continue
+
+        # Convert lists of rows into DataFrames
+        final_dataframes = {
+            task_id: pd.DataFrame(rows) for task_id, rows in task_results.items()
+        }
+        return final_dataframes
+
+
+class TaskProcessor:
+    """
+    A class that processes a single ROS message based on a specific analysis task config.
+    It extracts fields, applies parsing directives, and computes a final value.
+    """
 
     def __init__(self, analysis_task: Dict[str, Any]):
+        """Initializes the TaskProcessor with a specific analysis task configuration."""
         self.task_id = analysis_task['id']
         self.topic_name = analysis_task['topic_name']
         self.field_names = [name.strip() for name in analysis_task['field_names'].split(',')]
         self.parse_string = analysis_task['parse_string']
+        # Remove directives from the expression string for evaluation
+        self.expression = re.sub(r'\([^)]+\)', '', self.parse_string)
 
         self.aeval = Interpreter()
         self.directives = self._extract_directives()
@@ -99,64 +156,43 @@ class McapParser:
 
         raise ValueError(f"Unknown parsing directive: '{directive}'")
 
-    def process_mcap_files(self, mcap_paths: List[Path]) -> pd.DataFrame:
-        """Processes multiple MCAP files and generates a DataFrame for analysis."""
-        all_rows = []
-        # Remove directives from the expression string for evaluation
-        expression = re.sub(r'\([^)]+\)', '', self.parse_string)
+    def process_message(self, mcap_timestamp_ns: int, ros_msg: Any) -> Dict[str, Any]:
+        """
+        Processes a single ROS message and returns a dictionary representing a single row of data.
+        Returns None if the message cannot be processed.
+        """
+        raw_values = {}
+        parsed_values_for_eval = {}
 
-        for mcap_path in tqdm(natsorted(mcap_paths)):
-            try:
-                with open(mcap_path, "rb") as f:
-                    reader = make_reader(f, decoder_factories=[DecoderFactory()])
-                    for schema, channel, message, ros_msg in reader.iter_decoded_messages(topics=[self.topic_name]):
-                        # ros_msg = reader.deserialize(schema, message)
+        for field in self.field_names:
+            raw_val = self._get_field_value(ros_msg, field)
+            raw_values[f"raw_{field}"] = raw_val
 
-                        raw_values = {}
-                        parsed_values_for_eval = {}
-                        should_skip = False
+            if raw_val is None:
+                return None  # Skip message if any raw value is None
 
-                        for field in self.field_names:
-                            raw_val = self._get_field_value(ros_msg, field)
-                            raw_values[f"raw_{field}"] = raw_val
+            directive = self.directives.get(field)
+            if directive is None:
+                print(f"Warning: Directive for field '{field}' not found. Skipping message.", file=sys.stderr)
+                return None  # Skip message if directive is missing
 
-                            if raw_val is None:
-                                should_skip = True
-                                break
+            parsed_val = self._apply_directive(raw_val, directive)
+            if parsed_val is None:
+                return None  # Skip message if parsing fails
 
-                            directive = self.directives.get(field)
-                            if directive is None:
-                                print(f"Warning: Directive for field '{field}' not found. Skipping.", file=sys.stderr)
-                                should_skip = True
-                                break
+            # Replace dots with underscores for use in the asteval symbol table
+            safe_field_name = field.replace('.', '_')
+            parsed_values_for_eval[safe_field_name] = parsed_val
 
-                            parsed_val = self._apply_directive(raw_val, directive)
-                            if parsed_val is None:
-                                should_skip = True
-                                break
+        # Replace field names in the expression as well
+        safe_expression = self.expression
+        for field in self.field_names:
+            safe_expression = safe_expression.replace(field, field.replace('.', '_'))
 
-                            # Replace dots with underscores for use in the asteval symbol table
-                            safe_field_name = field.replace('.', '_')
-                            parsed_values_for_eval[safe_field_name] = parsed_val
+        self.aeval.symtable = parsed_values_for_eval
+        final_value = self.aeval.eval(safe_expression)
 
-                        if should_skip:
-                            continue
-
-                        # Replace field names in the expression as well
-                        safe_expression = expression
-                        for field in self.field_names:
-                           safe_expression = safe_expression.replace(field, field.replace('.', '_'))
-
-                        self.aeval.symtable = parsed_values_for_eval
-                        final_value = self.aeval.eval(safe_expression)
-
-                        row = {"mcap_timestamp_ns": message.log_time}
-                        row.update(raw_values)
-                        row["parsed_value"] = final_value
-                        all_rows.append(row)
-
-            except Exception as e:
-                print(f"Error: An error occurred while processing MCAP file '{mcap_path}': {e}", file=sys.stderr)
-                continue
-
-        return pd.DataFrame(all_rows)
+        row = {"mcap_timestamp_ns": mcap_timestamp_ns}
+        row.update(raw_values)
+        row["parsed_value"] = final_value
+        return row
