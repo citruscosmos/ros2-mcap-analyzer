@@ -52,10 +52,15 @@ def process_task(df: pd.DataFrame, task: Dict[str, Any], reporter: Reporter):
         print(f"Warning: DataFrame for task '{task['id']}' is empty. Skipping analysis.")
         return
 
+    # Calculate overall statistics
+    start_time_ns = df['mcap_timestamp_ns'].iloc[0]
+    end_time_ns = df['mcap_timestamp_ns'].iloc[-1]
+    message_count = len(df)
+
     analysis_type = task.get('analysis_type', 'none')
     analyzer = get_analyzer(analysis_type)
     result = analyzer.analyze(df)
-    reporter.add_analysis_result(task['id'], task['topic_name'], analysis_type, result)
+    reporter.add_analysis_result(task['id'], task['topic_name'], analysis_type, result, start_time_ns, end_time_ns, message_count)
 
 
 def run_analysis(mcap_source_path: Path, config_path: Path):
