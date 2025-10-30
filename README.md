@@ -38,13 +38,22 @@ This is a Python-based command-line tool for analyzing ROS2 messages recorded in
 
 ## Usage
 
-Run the analysis from the command line by providing the path to your MCAP data and your configuration file.
+Run the analysis from the command line by providing the path to your data source and your configuration file. Use the `--mcap` flag for MCAP files or the `--csv` flag for CSV directories.
 
+**For MCAP files:**
 ```bash
-python -m mcap_analyzer.main <path_to_mcap_source> <path_to_config.yaml>
+python -m mcap_analyzer.main --mcap <path_to_mcap_source> <path_to_config.yaml>
 ```
 
--   `<path_to_mcap_source>`: Can be a path to a single `.mcap` file or a directory containing multiple `.mcap` files.
+-   `<path_to_mcap_source>`: Path to a single `.mcap` file or a directory containing multiple `.mcap` files.
+-   `<path_to_config.yaml>`: The path to your YAML configuration file.
+
+**For CSV directories:**
+```bash
+python -m mcap_analyzer.main --csv <path_to_csv_directory> <path_to_config.yaml>
+```
+
+-   `<path_to_csv_directory>`: Path to a directory containing the CSV files.
 -   `<path_to_config.yaml>`: The path to your YAML configuration file.
 
 Results, including the Markdown report and intermediate CSVs, will be saved in a new directory under `results/` named with the execution timestamp (e.g., `results/20251025_143000/`).
