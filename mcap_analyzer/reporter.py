@@ -17,12 +17,15 @@ class Reporter:
         df.to_csv(csv_path, index=False)
         print(f"Saved intermediate CSV to: {csv_path}")
 
-    def add_analysis_result(self, task_id: str, topic_name: str, analysis_type: str, result: dict):
+    def add_analysis_result(self, task_id: str, topic_name: str, analysis_type: str, result: dict, start_time_ns: int, end_time_ns: int, message_count: int):
         """Stores the result of an analysis task."""
         self.results[task_id] = {
             "topic_name": topic_name,
             "analysis_type": analysis_type,
-            "result": result
+            "result": result,
+            "start_time_ns": start_time_ns,
+            "end_time_ns": end_time_ns,
+            "message_count": message_count
         }
 
     def _format_stats_table(self, title: str, data: Dict[str, float], unit: str) -> str:
@@ -48,6 +51,13 @@ class Reporter:
 
             for task_id, data in self.results.items():
                 f.write(f"## Task: {task_id} (Topic: {data['topic_name']})\n\n")
+
+                # Overall Stats Section
+                f.write("### Overall Stats\n")
+                f.write(f"- **Total Messages:** {data['message_count']}\n")
+                f.write(f"- **Start Time:** {pd.to_datetime(data['start_time_ns'], unit='ns')} (UTC)\n")
+                f.write(f"- **End Time:** {pd.to_datetime(data['end_time_ns'], unit='ns')} (UTC)\n\n")
+
                 result = data['result']
                 analysis_type = data['analysis_type']
 
